@@ -5,7 +5,6 @@ import com.cloudbees.plugins.credentials.CredentialsProvider;
 import com.cloudbees.plugins.credentials.common.StandardUsernameCredentials;
 import com.cloudbees.plugins.credentials.domains.URIRequirementBuilder;
 import com.google.common.collect.Iterables;
-
 import edu.umd.cs.findbugs.annotations.CheckForNull;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.*;
@@ -16,6 +15,7 @@ import hudson.model.*;
 import hudson.model.Descriptor.FormException;
 import hudson.model.Hudson.MasterComputer;
 import hudson.plugins.git.browser.GitRepositoryBrowser;
+import hudson.plugins.git.browser.GithubWeb;
 import hudson.plugins.git.extensions.GitClientConflictException;
 import hudson.plugins.git.extensions.GitClientType;
 import hudson.plugins.git.extensions.GitSCMExtension;
@@ -25,7 +25,6 @@ import hudson.plugins.git.extensions.impl.BuildChooserSetting;
 import hudson.plugins.git.extensions.impl.ChangelogToBranch;
 import hudson.plugins.git.extensions.impl.PreBuildMerge;
 import hudson.plugins.git.opt.PreBuildMergeOptions;
-import hudson.plugins.git.util.Build;
 import hudson.plugins.git.util.*;
 import hudson.remoting.Channel;
 import hudson.scm.*;
@@ -36,10 +35,11 @@ import hudson.triggers.SCMTrigger;
 import hudson.util.DescribableList;
 import hudson.util.FormValidation;
 import hudson.util.IOException2;
+import hudson.util.IOUtils;
 import hudson.util.ListBoxModel;
+import hudson.util.LogTaskListener;
 import jenkins.model.Jenkins;
 import net.sf.json.JSONObject;
-
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.transport.RefSpec;
@@ -58,7 +58,6 @@ import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.export.Exported;
 
 import javax.servlet.ServletException;
-
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
@@ -69,16 +68,15 @@ import java.text.MessageFormat;
 import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import static hudson.Util.*;
-import static hudson.init.InitMilestone.JOB_LOADED;
-import static hudson.init.InitMilestone.PLUGINS_STARTED;
-import hudson.plugins.git.browser.GithubWeb;
-import static hudson.scm.PollingResult.*;
-import hudson.util.IOUtils;
-import hudson.util.LogTaskListener;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static hudson.Util.fixEmpty;
+import static hudson.Util.fixEmptyAndTrim;
+import static hudson.init.InitMilestone.JOB_LOADED;
+import static hudson.init.InitMilestone.PLUGINS_STARTED;
+import static hudson.scm.PollingResult.BUILD_NOW;
+import static hudson.scm.PollingResult.NO_CHANGES;
 import static org.apache.commons.lang.StringUtils.isBlank;
 
 /**
@@ -986,7 +984,7 @@ public class GitSCM extends GitSCMBackwardCompatibility {
 
         environment.put(GIT_COMMIT, revToBuild.revision.getSha1String());
         Branch branch = Iterables.getFirst(revToBuild.revision.getBranches(),null);
-        if (branch!=null) { // null for a detached HEAD
+        if (branch!=null && getBranchName(branch) != null) { // null for a detached HEAD
             environment.put(GIT_BRANCH, getBranchName(branch));
         }
 
@@ -1102,7 +1100,7 @@ public class GitSCM extends GitSCMBackwardCompatibility {
         Revision rev = fixNull(getBuildData(build)).getLastBuiltRevision();
         if (rev!=null) {
             Branch branch = Iterables.getFirst(rev.getBranches(), null);
-            if (branch!=null) {
+            if (branch!=null && getBranchName(branch) != null) {
                 env.put(GIT_BRANCH, getBranchName(branch));
 
                 String prevCommit = getLastBuiltCommitOfBranch(build, branch);
@@ -1139,7 +1137,10 @@ public class GitSCM extends GitSCMBackwardCompatibility {
     private String getBranchName(Branch branch)
     {
         String name = branch.getName();
-        if(name.startsWith("refs/remotes/")) {
+        if (name == null) {
+            return null;
+        }
+        if (name.startsWith("refs/remotes/")) {
             //Restore expected previous behaviour
             name = name.substring("refs/remotes/".length());
         }
